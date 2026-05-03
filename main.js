@@ -1,134 +1,245 @@
 // ============================================================
 //  SnorkWatch — main.js
-//  Vanilla JS + Three.js ocean + Open-Meteo Marine API
+//  Vanilla JS + Three.js realistic ocean + Open-Meteo Marine API
 // ============================================================
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js';
 
-// ── Three.js Ocean ──────────────────────────────────────────
+// ── Realistic Water Shader ──────────────────────────────────
+// Custom GLSL water using Gerstner waves + normal-map distortion
+// for a realistic angled ocean surface view.
+
+const waterVertexShader = `
+  uniform float uTime;
+  uniform float uWaviness;
+
+  varying vec2 vUv;
+  varying vec3 vWorldPos;
+  varying vec3 vNormal;
+  varying float vWaveHeight;
+
+  // Gerstner wave function
+  vec3 gerstner(vec2 pos, float amp, float freq, float speed, vec2 dir, float time) {
+    float phase = dot(dir, pos) * freq + time * speed;
+    float s = sin(phase);
+    float c = cos(phase);
+    return vec3(
+      dir.x * amp * c,
+      amp * s,
+      dir.y * amp * c
+    );
+  }
+
+  void main() {
+    vUv = uv;
+    vec3 pos = position;
+
+    float t = uTime;
+    float w = uWaviness;
+
+    // Layer multiple Gerstner waves
+    vec3 wave = vec3(0.0);
+    wave += gerstner(pos.xz, 0.28 * w, 0.5,  1.2, normalize(vec2(1.0,  0.6)), t);
+    wave += gerstner(pos.xz, 0.18 * w, 0.8,  0.9, normalize(vec2(-0.7, 1.0)), t);
+    wave += gerstner(pos.xz, 0.12 * w, 1.2,  1.5, normalize(vec2(0.3, -0.9)), t);
+    wave += gerstner(pos.xz, 0.06 * w, 2.1,  2.0, normalize(vec2(-1.0, 0.3)), t);
+    wave += gerstner(pos.xz, 0.04 * w, 3.5,  2.8, normalize(vec2(0.8,  0.7)), t);
+
+    pos.x += wave.x;
+    pos.y += wave.y;
+    pos.z += wave.z;
+    vWaveHeight = wave.y;
+
+    vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
+    vNormal = normalize(normalMatrix * normal);
+
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+  }
+`;
+
+const waterFragmentShader = `
+  uniform float uTime;
+  uniform float uWaviness;
+  uniform vec3 uSunDir;
+  uniform sampler2D uNormalMap;
+
+  varying vec2 vUv;
+  varying vec3 vWorldPos;
+  varying vec3 vNormal;
+  varying float vWaveHeight;
+
+  void main() {
+    float t = uTime;
+
+    // Scroll two normal map layers in different directions
+    vec2 uv1 = vUv * 4.0 + vec2(t * 0.04,  t * 0.02);
+    vec2 uv2 = vUv * 4.0 + vec2(-t * 0.03, t * 0.05);
+
+    vec3 n1 = texture2D(uNormalMap, uv1).rgb * 2.0 - 1.0;
+    vec3 n2 = texture2D(uNormalMap, uv2).rgb * 2.0 - 1.0;
+    vec3 normalDetail = normalize(n1 + n2);
+
+    // Blend geometry normal with detail normal
+    vec3 N = normalize(vNormal + normalDetail * 0.6 * uWaviness);
+
+    // View direction
+    vec3 V = normalize(cameraPosition - vWorldPos);
+
+    // Sun specular (Blinn-Phong)
+    vec3 H = normalize(uSunDir + V);
+    float spec = pow(max(dot(N, H), 0.0), 180.0);
+    float specStrength = spec * 2.2;
+
+    // Fresnel — more reflection at grazing angles
+    float fresnel = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    fresnel = 0.04 + 0.96 * fresnel;
+
+    // Deep vs shallow color
+    vec3 deepColor    = vec3(0.01, 0.12, 0.28);
+    vec3 shallowColor = vec3(0.0,  0.38, 0.58);
+    vec3 foamColor    = vec3(0.75, 0.93, 1.0);
+    vec3 skyColor     = vec3(0.35, 0.68, 0.90);
+
+    // Depth fade
+    float depth = smoothstep(-0.5, 0.6, vWaveHeight);
+    vec3 waterColor = mix(deepColor, shallowColor, depth);
+
+    // Sky reflection tint via Fresnel
+    waterColor = mix(waterColor, skyColor, fresnel * 0.45);
+
+    // Foam on wave crests
+    float foam = smoothstep(0.22 * uWaviness, 0.45 * uWaviness, vWaveHeight);
+    waterColor = mix(waterColor, foamColor, foam * 0.55);
+
+    // Add specular highlight
+    waterColor += vec3(1.0, 0.97, 0.85) * specStrength;
+
+    // Subtle horizon darkening
+    float horizonFade = smoothstep(0.0, 0.3, V.y);
+    waterColor = mix(waterColor * 0.7, waterColor, horizonFade);
+
+    gl_FragColor = vec4(waterColor, 1.0);
+  }
+`;
 
 function initOcean() {
   const canvas = document.getElementById('ocean');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x002a4a);
-  scene.fog = new THREE.Fog(0x002a4a, 20, 60);
 
-  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
-  camera.position.set(0, 4, 12);
-  camera.lookAt(0, 0, 0);
+  // Sky gradient background
+  const skyGeo = new THREE.SphereGeometry(80, 16, 8);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      uTopColor: { value: new THREE.Color(0x001a3a) },
+      uHorizonColor: { value: new THREE.Color(0x0077b6) },
+    },
+    vertexShader: `
+      varying vec3 vPos;
+      void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+    `,
+    fragmentShader: `
+      uniform vec3 uTopColor;
+      uniform vec3 uHorizonColor;
+      varying vec3 vPos;
+      void main() {
+        float t = clamp((vPos.y + 10.0) / 60.0, 0.0, 1.0);
+        gl_FragColor = vec4(mix(uHorizonColor, uTopColor, t), 1.0);
+      }
+    `,
+  });
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-  // — Ocean plane geometry —
-  const SEGS = 120;
-  const geo = new THREE.PlaneGeometry(50, 50, SEGS, SEGS);
-  geo.rotateX(-Math.PI / 2);
+  // Camera — low angle looking across the surface
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+  camera.position.set(0, 2.5, 14);
+  camera.lookAt(0, 0.5, 0);
 
-  // Store original Y positions
-  const posArr = geo.attributes.position.array;
-  const origY = new Float32Array(posArr.length / 3);
-  for (let i = 0; i < origY.length; i++) origY[i] = posArr[i * 3 + 1];
+  // Normal map texture — procedural fallback, replaced when loaded
+  const normalMapUrl = 'https://raw.githubusercontent.com/mrdoob/three.js/r128/examples/textures/waternormals.jpg';
+  const loader = new THREE.TextureLoader();
+  const normalMap = loader.load(normalMapUrl, tex => {
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  });
+  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
 
-  const mat = new THREE.MeshPhongMaterial({
-    color: 0x0077b6,
-    emissive: 0x003049,
-    specular: 0x90e0ef,
-    shininess: 140,
-    wireframe: false,
-    flatShading: false,
-    transparent: true,
-    opacity: 0.92,
+  // Water mesh
+  const waterGeo = new THREE.PlaneGeometry(120, 120, 80, 80);
+  waterGeo.rotateX(-Math.PI / 2);
+
+  let waviness = 0.5;
+
+  const sunDir = new THREE.Vector3(0.5, 0.8, 0.3).normalize();
+
+  const waterUniforms = {
+    uTime:      { value: 0 },
+    uWaviness:  { value: waviness },
+    uSunDir:    { value: sunDir },
+    uNormalMap: { value: normalMap },
+  };
+
+  const waterMat = new THREE.ShaderMaterial({
+    uniforms: waterUniforms,
+    vertexShader: waterVertexShader,
+    fragmentShader: waterFragmentShader,
   });
 
-  const ocean = new THREE.Mesh(geo, mat);
-  scene.add(ocean);
+  const water = new THREE.Mesh(waterGeo, waterMat);
+  scene.add(water);
 
-  // — Foam plane (very slightly above) —
-  const foamGeo = new THREE.PlaneGeometry(50, 50, SEGS, SEGS);
-  foamGeo.rotateX(-Math.PI / 2);
-  const foamMat = new THREE.MeshPhongMaterial({
-    color: 0xb8e8ff,
+  // Sun disc in sky
+  const sunGeo = new THREE.CircleGeometry(4, 32);
+  const sunMat = new THREE.MeshBasicMaterial({
+    color: 0xfff4c2,
     transparent: true,
-    opacity: 0.08,
+    opacity: 0.95,
+  });
+  const sunDisc = new THREE.Mesh(sunGeo, sunMat);
+  sunDisc.position.set(14, 18, -40);
+  scene.add(sunDisc);
+
+  // Sun glow halo
+  const haloGeo = new THREE.CircleGeometry(9, 32);
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0xff9800,
+    transparent: true,
+    opacity: 0.18,
     depthWrite: false,
   });
-  const foam = new THREE.Mesh(foamGeo, foamMat);
-  foam.position.y = 0.02;
-  scene.add(foam);
+  const halo = new THREE.Mesh(haloGeo, haloMat);
+  halo.position.set(14, 18, -40.1);
+  scene.add(halo);
 
-  // — Lighting —
-  const ambient = new THREE.AmbientLight(0x87ceeb, 0.6);
-  scene.add(ambient);
-
-  const sunLight = new THREE.DirectionalLight(0xfff4c2, 1.8);
-  sunLight.position.set(10, 20, 10);
-  scene.add(sunLight);
-
-  const fillLight = new THREE.PointLight(0x00b4d8, 1.2, 30);
-  fillLight.position.set(-8, 3, 6);
-  scene.add(fillLight);
-
-  const rimLight = new THREE.PointLight(0x48cae4, 0.6, 25);
-  rimLight.position.set(8, 2, -5);
-  scene.add(rimLight);
-
-  // — Horizon mist (large flat quad behind ocean) —
-  const mistGeo = new THREE.PlaneGeometry(60, 20);
-  const mistMat = new THREE.MeshBasicMaterial({
-    color: 0x023e8a,
-    transparent: true,
-    opacity: 0.7,
-    depthWrite: false,
-  });
-  const mist = new THREE.Mesh(mistGeo, mistMat);
-  mist.position.set(0, 3, -18);
-  scene.add(mist);
-
-  // — Animated wave function —
-  let waviness = 0.4; // default; updated by snorkel score
+  // Animate
   const clock = new THREE.Clock();
 
-  function updateWaves(t) {
-    const pos = geo.attributes.position;
-    const fpos = foamGeo.attributes.position;
-    for (let i = 0; i < origY.length; i++) {
-      const x = pos.getX(i);
-      const z = pos.getZ(i);
-      const wave =
-        Math.sin(x * 0.5 + t * 1.2) * 0.35 * waviness +
-        Math.sin(z * 0.4 + t * 0.9) * 0.25 * waviness +
-        Math.sin((x + z) * 0.3 + t * 1.5) * 0.15 * waviness +
-        Math.cos(x * 0.8 - t * 0.7) * 0.1 * waviness;
-      pos.setY(i, origY[i] + wave);
-      fpos.setY(i, origY[i] + wave + 0.02);
-    }
-    pos.needsUpdate = true;
-    fpos.needsUpdate = true;
-    geo.computeVertexNormals();
-  }
-
-  // — Animate —
   function animate() {
     requestAnimationFrame(animate);
     const t = clock.getElapsedTime();
-    updateWaves(t);
-    camera.position.x = Math.sin(t * 0.07) * 0.5;
-    camera.position.y = 4 + Math.sin(t * 0.13) * 0.3;
-    camera.lookAt(0, 0, 0);
+    waterUniforms.uTime.value = t;
+    waterUniforms.uWaviness.value += (waviness - waterUniforms.uWaviness.value) * 0.02;
+
+    // Gentle camera sway
+    camera.position.x = Math.sin(t * 0.06) * 0.8;
+    camera.position.y = 2.5 + Math.sin(t * 0.11) * 0.15;
+    camera.lookAt(Math.sin(t * 0.05) * 0.5, 0.5, 0);
+
     renderer.render(scene, camera);
   }
   animate();
 
-  // — Resize —
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Expose setter for wave intensity
   return {
     setWaviness(v) { waviness = Math.max(0.15, Math.min(2.5, v)); }
   };
