@@ -234,11 +234,17 @@ function initOcean() {
   }
   animate();
 
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+  function onResize() {
+    // Use visualViewport if available — more accurate in PWA standalone mode
+    const w = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+    const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
+    renderer.setSize(w, h);
+  }
+
+  window.addEventListener('resize', onResize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
 
   return {
     setWaviness(v) { waviness = Math.max(0.15, Math.min(2.5, v)); }
@@ -617,6 +623,10 @@ const dropdown   = document.getElementById('autocomplete');
 let acResults    = [];
 let acTimer      = null;
 
+// Last successfully resolved coords — used by retry/refresh
+// so we never re-geocode an already-resolved display name
+let lastCoords   = null; // { lat, lon, name }
+
 function closeDropdown() {
   dropdown.classList.add('hidden');
   dropdown.innerHTML = '';
@@ -626,15 +636,17 @@ function closeDropdown() {
 function renderDropdown(results) {
   dropdown.innerHTML = '';
   if (!results.length) { closeDropdown(); return; }
-  results.forEach((r, i) => {
+  results.forEach((r) => {
     const parts = [r.name, r.admin1, r.country].filter(Boolean);
     const el = document.createElement('div');
     el.className = 'ac-item';
     el.textContent = parts.join(', ');
-    el.addEventListener('mousedown', e => e.preventDefault()); // keep input focus
+    el.addEventListener('mousedown', e => e.preventDefault());
     el.addEventListener('click', () => {
       input.value = parts.join(', ');
       closeDropdown();
+      // Store coords before running so retry/refresh work
+      lastCoords = { lat: r.latitude, lon: r.longitude, name: r.name };
       runForCoords(r.latitude, r.longitude, r.name, ocean);
     });
     dropdown.appendChild(el);
@@ -643,6 +655,8 @@ function renderDropdown(results) {
 }
 
 input.addEventListener('input', () => {
+  // User is editing — clear stored coords so next run geocodes fresh
+  lastCoords = null;
   clearTimeout(acTimer);
   const q = input.value.trim();
   if (q.length < 2) { closeDropdown(); return; }
@@ -656,19 +670,22 @@ input.addEventListener('input', () => {
 });
 
 input.addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    closeDropdown();
-    triggerSearch();
-  }
+  if (e.key === 'Enter') { closeDropdown(); triggerSearch(); }
   if (e.key === 'Escape') closeDropdown();
 });
 
 input.addEventListener('blur', () => {
-  // slight delay so click on item fires first
   setTimeout(closeDropdown, 150);
 });
 
 async function triggerSearch() {
+  // If we already have resolved coords (picked from dropdown or geolocation),
+  // just re-run — no geocoding needed
+  if (lastCoords) {
+    runForCoords(lastCoords.lat, lastCoords.lon, lastCoords.name, ocean);
+    return;
+  }
+
   const q = input.value.trim();
   if (!q) return;
   hide('result');
@@ -676,10 +693,11 @@ async function triggerSearch() {
   show('loading');
   try {
     const results = await geocodePlace(q);
-    if (!results.length) throw new Error(`Couldn't find "${q}". Try a different location.`);
+    if (!results.length) throw new Error(`Couldn't find "${q}". Try a more specific location.`);
     const r = results[0];
     const name = [r.name, r.admin1, r.country].filter(Boolean).join(', ');
     input.value = name;
+    lastCoords = { lat: r.latitude, lon: r.longitude, name: r.name };
     runForCoords(r.latitude, r.longitude, r.name, ocean);
   } catch (err) {
     hide('loading');
@@ -692,12 +710,14 @@ searchBtn.addEventListener('click', () => { closeDropdown(); triggerSearch(); })
 
 geoBtn.addEventListener('click', async () => {
   closeDropdown();
+  lastCoords = null;
   geoBtn.disabled = true;
   geoBtn.textContent = '⏳';
   try {
     const { lat, lon } = await getLocation();
     const place = await getPlaceName(lat, lon);
     input.value = place;
+    lastCoords = { lat, lon, name: place };
     runForCoords(lat, lon, place, ocean);
   } catch (err) {
     document.getElementById('error-msg').textContent = err.message;
@@ -718,8 +738,9 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
   triggerSearch();
 });
 
-// Restore last location or just show the idle state
+// Restore last location from previous session
 const last = (() => { try { return JSON.parse(localStorage.getItem('sw_last')); } catch { return null; } })();
 if (last) {
   input.value = last.name;
+  lastCoords = { lat: last.lat, lon: last.lon, name: last.name };
 }
