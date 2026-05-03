@@ -1,5 +1,5 @@
 /* ========================================================
-   SnorkWatch — Retro Tropical PWA
+   SnorkWatch -- Retro Tropical PWA
    ======================================================== */
 
 :root {
@@ -390,43 +390,4 @@ button:active { transform: scale(0.96); }
   .card      { padding: 1.25rem; }
   .verdict-icon { font-size: 2.5rem; }
   .verdict-label { font-size: 1.5rem; }
-}
-
-/* ── Update banner ───────────────────────────────────── */
-.update-banner {
-  position: fixed;
-  top: max(env(safe-area-inset-top, 0px), 0.75rem);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: rgba(0, 20, 45, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(105, 240, 174, 0.35);
-  border-radius: 999px;
-  padding: 0.55rem 0.75rem 0.55rem 1.1rem;
-  white-space: nowrap;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  animation: fade-down 0.4s ease both;
-}
-
-.update-banner span {
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: rgba(200, 255, 230, 0.9);
-}
-
-.update-banner button {
-  font-size: 0.75rem;
-  font-weight: 800;
-  padding: 0.35rem 0.9rem;
-  background: linear-gradient(135deg, #69f0ae, #00c853);
-  color: #002a1a;
-  border-radius: 999px;
-  letter-spacing: 0.06em;
-  box-shadow: 0 2px 8px rgba(105, 240, 174, 0.4);
 }
