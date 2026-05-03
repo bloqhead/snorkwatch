@@ -87,7 +87,7 @@
           reg.addEventListener('updatefound', () => {
             newWorker = reg.installing;
             newWorker.addEventListener('statechange', () => {
-              // New SW is installed and waiting — show banner
+              // New SW is installed and waiting -- show banner
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
                 document.getElementById('update-banner').classList.remove('hidden');
               }
