@@ -1,5 +1,5 @@
 /* ========================================================
-   SnorkWatch -- Retro Tropical PWA
+   SnorkWatch — Retro Tropical PWA
    ======================================================== */
 
 :root {
@@ -27,7 +27,7 @@
   padding: 0;
 }
 
-/* dvh fixes the bottom gap in PWA standalone mode on iOS --
+/* dvh fixes the bottom gap in PWA standalone mode on iOS —
    it excludes browser chrome, which 100vh does not */
 html {
   height: 100dvh;
@@ -438,3 +438,99 @@ button:active { transform: scale(0.96); }
   box-shadow: 0 2px 8px rgba(105, 240, 174, 0.4);
   width: auto;
 }
+
+/* ── Search bar ──────────────────────────────────────── */
+.search-wrap {
+  width: 100%;
+  max-width: 400px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(0, 30, 60, 0.6);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid rgba(200, 240, 255, 0.18);
+  border-radius: 999px;
+  padding: 0.35rem 0.35rem 0.35rem 1rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  animation: fade-up 0.5s ease both;
+}
+
+.location-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--foam);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.location-input::placeholder {
+  color: rgba(200, 240, 255, 0.35);
+}
+
+.geolocate-btn,
+.search-btn {
+  flex-shrink: 0;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.geolocate-btn {
+  background: rgba(0, 100, 170, 0.5);
+  color: var(--foam);
+  box-shadow: none;
+}
+
+.geolocate-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.search-btn {
+  background: linear-gradient(135deg, var(--ocean-light), #0077b6);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0,153,204,0.4);
+}
+
+/* ── Autocomplete dropdown ───────────────────────────── */
+.autocomplete-dropdown {
+  width: 100%;
+  max-width: 400px;
+  background: rgba(0, 20, 50, 0.92);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid rgba(200, 240, 255, 0.15);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 20;
+  flex-shrink: 0;
+  animation: fade-up 0.15s ease both;
+}
+
+.ac-item {
+  padding: 0.65rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgba(200, 240, 255, 0.85);
+  cursor: pointer;
+  border-bottom: 1px solid rgba(200, 240, 255, 0.06);
+  transition: background 0.1s ease;
+}
+
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover,
+.ac-item:active { background: rgba(0, 100, 180, 0.4); color: var(--foam); }

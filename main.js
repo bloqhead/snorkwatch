@@ -562,30 +562,41 @@ function scoreColor(s) {
   return 'linear-gradient(90deg, #c62828, #ff6b6b)';
 }
 
+// ── Geocoding (Open-Meteo, free, no key) ─────────────────────
+
+async function geocodePlace(query) {
+  const url = new URL('https://geocoding-api.open-meteo.com/v1/search');
+  url.searchParams.set('name', query);
+  url.searchParams.set('count', '5');
+  url.searchParams.set('language', 'en');
+  url.searchParams.set('format', 'json');
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('Geocoding failed.');
+  const d = await r.json();
+  return d.results || [];
+}
+
 // ── Main app flow ────────────────────────────────────────────
 
-async function run(ocean) {
-  // Reset UI
+async function runForCoords(lat, lon, placeName, ocean) {
   hide('result');
   hide('error');
   show('loading');
 
   try {
-    const { lat, lon } = await getLocation();
-
-    // Fetch conditions & place name in parallel
-    const [conditions, place] = await Promise.all([
+    const [conditions, resolvedPlace] = await Promise.all([
       fetchConditions(lat, lon),
-      getPlaceName(lat, lon),
+      placeName ? Promise.resolve(placeName) : getPlaceName(lat, lon),
     ]);
 
-    const { score } = scoreConditions(conditions);
-    const verdict = getVerdict(score);
     const scored = scoreConditions(conditions);
+    const verdict = getVerdict(scored.score);
 
     hide('loading');
-    renderResult(conditions, scored.score, verdict, place, ocean);
+    renderResult(conditions, scored.score, verdict, resolvedPlace, ocean);
 
+    // Persist last location
+    localStorage.setItem('sw_last', JSON.stringify({ lat, lon, name: resolvedPlace }));
   } catch (err) {
     hide('loading');
     document.getElementById('error-msg').textContent = err.message;
@@ -597,10 +608,118 @@ async function run(ocean) {
 
 const ocean = initOcean();
 
-run(ocean);
+// ── Search bar logic ──────────────────────────────────────────
 
-document.getElementById('retry-btn').addEventListener('click', () => run(ocean));
+const input      = document.getElementById('location-input');
+const geoBtn     = document.getElementById('geolocate-btn');
+const searchBtn  = document.getElementById('search-btn');
+const dropdown   = document.getElementById('autocomplete');
+let acResults    = [];
+let acTimer      = null;
+
+function closeDropdown() {
+  dropdown.classList.add('hidden');
+  dropdown.innerHTML = '';
+  acResults = [];
+}
+
+function renderDropdown(results) {
+  dropdown.innerHTML = '';
+  if (!results.length) { closeDropdown(); return; }
+  results.forEach((r, i) => {
+    const parts = [r.name, r.admin1, r.country].filter(Boolean);
+    const el = document.createElement('div');
+    el.className = 'ac-item';
+    el.textContent = parts.join(', ');
+    el.addEventListener('mousedown', e => e.preventDefault()); // keep input focus
+    el.addEventListener('click', () => {
+      input.value = parts.join(', ');
+      closeDropdown();
+      runForCoords(r.latitude, r.longitude, r.name, ocean);
+    });
+    dropdown.appendChild(el);
+  });
+  dropdown.classList.remove('hidden');
+}
+
+input.addEventListener('input', () => {
+  clearTimeout(acTimer);
+  const q = input.value.trim();
+  if (q.length < 2) { closeDropdown(); return; }
+  acTimer = setTimeout(async () => {
+    try {
+      const results = await geocodePlace(q);
+      acResults = results;
+      renderDropdown(results);
+    } catch { closeDropdown(); }
+  }, 300);
+});
+
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    closeDropdown();
+    triggerSearch();
+  }
+  if (e.key === 'Escape') closeDropdown();
+});
+
+input.addEventListener('blur', () => {
+  // slight delay so click on item fires first
+  setTimeout(closeDropdown, 150);
+});
+
+async function triggerSearch() {
+  const q = input.value.trim();
+  if (!q) return;
+  hide('result');
+  hide('error');
+  show('loading');
+  try {
+    const results = await geocodePlace(q);
+    if (!results.length) throw new Error(`Couldn't find "${q}". Try a different location.`);
+    const r = results[0];
+    const name = [r.name, r.admin1, r.country].filter(Boolean).join(', ');
+    input.value = name;
+    runForCoords(r.latitude, r.longitude, r.name, ocean);
+  } catch (err) {
+    hide('loading');
+    document.getElementById('error-msg').textContent = err.message;
+    show('error');
+  }
+}
+
+searchBtn.addEventListener('click', () => { closeDropdown(); triggerSearch(); });
+
+geoBtn.addEventListener('click', async () => {
+  closeDropdown();
+  geoBtn.disabled = true;
+  geoBtn.textContent = '⏳';
+  try {
+    const { lat, lon } = await getLocation();
+    const place = await getPlaceName(lat, lon);
+    input.value = place;
+    runForCoords(lat, lon, place, ocean);
+  } catch (err) {
+    document.getElementById('error-msg').textContent = err.message;
+    show('error');
+  } finally {
+    geoBtn.disabled = false;
+    geoBtn.textContent = '📍';
+  }
+});
+
+document.getElementById('retry-btn').addEventListener('click', () => {
+  hide('error');
+  triggerSearch();
+});
+
 document.getElementById('refresh-btn').addEventListener('click', () => {
   hide('result');
-  run(ocean);
+  triggerSearch();
 });
+
+// Restore last location or just show the idle state
+const last = (() => { try { return JSON.parse(localStorage.getItem('sw_last')); } catch { return null; } })();
+if (last) {
+  input.value = last.name;
+}

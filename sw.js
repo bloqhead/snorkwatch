@@ -10,7 +10,7 @@ self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE).then(c => c.addAll(SHELL))
   );
-  // Don't skipWaiting -- let the update banner handle it
+  // Don't skipWaiting — let the update banner handle it
 });
 
 self.addEventListener('activate', e => {
@@ -43,7 +43,7 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Network-first for app shell -- always fetch fresh, update cache, fall back offline
+  // Network-first for app shell — always fetch fresh, update cache, fall back offline
   e.respondWith(
     fetch(e.request)
       .then(res => {
