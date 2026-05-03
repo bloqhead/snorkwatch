@@ -313,6 +313,7 @@ async function fetchConditions(lat, lon) {
   forecastUrl.searchParams.set('current', [
     'wind_speed_10m',
     'wind_gusts_10m',
+    'wind_direction_10m',
     'precipitation',
     'uv_index',
     'visibility',
@@ -344,6 +345,7 @@ async function fetchConditions(lat, lon) {
     currentSpeed: m.ocean_current_velocity ?? null, // m/s
     windSpeed: f.wind_speed_10m ?? null,      // mph
     windGusts: f.wind_gusts_10m ?? null,      // mph
+    windDirection: f.wind_direction_10m ?? null, // degrees
     precipitation: f.precipitation ?? null,  // mm
     uvIndex: f.uv_index ?? null,
     visibility: f.visibility ?? null,        // metres
@@ -486,6 +488,14 @@ function weatherLabel(code) {
   return map[code] ?? `Code ${code}`;
 }
 
+
+// Degrees → compass cardinal + intercardinal
+function degreesToCompass(deg) {
+  if (deg === null) return '—';
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
 function renderResult(c, score, verdict, place, ocean) {
   const resultEl = document.getElementById('result');
   resultEl.className = `card card--result ${verdict.cls}`;
@@ -536,6 +546,16 @@ function renderResult(c, score, verdict, place, ocean) {
       <span class="stat-icon">🌤️</span>
       <span class="stat-value" style="font-size:0.85rem">${sky}</span>
       <span class="stat-label">Conditions</span>
+    </div>
+    <div class="stat">
+      <span class="stat-icon">🧭</span>
+      <span class="stat-value">${degreesToCompass(c.windDirection)}</span>
+      <span class="stat-label">Wind dir</span>
+    </div>
+    <div class="stat">
+      <span class="stat-icon">⏱️</span>
+      <span class="stat-value">${c.wavePeriod !== null ? c.wavePeriod.toFixed(0) + 's' : '—'}</span>
+      <span class="stat-label">Wave period</span>
     </div>
     <div class="score-bar-wrap">
       <div class="score-bar-label">Snorkel score — ${score}/100</div>
